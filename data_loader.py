@@ -10,7 +10,7 @@ from pathlib import Path
 @st.cache_data
 def load_all_data():
     """全データをロード"""
-    data_dir = Path('data')
+    data_dir = Path(__file__).parent / 'data'
     
     # 従業員スキルデータ
     df_employee = pd.read_csv(data_dir / 'employee_skill_data.csv', encoding='utf-8-sig')

@@ -3,6 +3,8 @@ import pandas as pd
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
+from legacy_adapter import has_skill_trend
+
 def show_monitoring_dashboard(df_daily_prod, target_location):
     """施策実行後のモニタリング"""
     
@@ -49,11 +51,11 @@ def show_monitoring_dashboard(df_daily_prod, target_location):
     with col2:
         current_skill = latest_data['平均スキル予測値']
         st.metric(
-            "現在のスキルスコア",
+            "スキルスコア（拠点平均・参考値）",
             f"{current_skill:.2f}",
             delta=f"{current_skill - target_skill:.2f}",
             delta_color="normal",
-            help=f"目標: {target_skill}"
+            help=f"目標: {target_skill}。従業員評価は単一時点のため、日次で変動しない参考値です"
         )
     
     with col3:
@@ -260,23 +262,34 @@ def show_monitoring_dashboard(df_daily_prod, target_location):
         else:
             st.error("⚠️ 悪化トレンド", icon="📉")
     
+    # スキル系列に日次変動がある場合のみ推移判定する。
+    # 拠点平均で補完した参考値（一定値）の場合は判定自体を行わない。
+    skill_has_trend = has_skill_trend(df_target_daily['平均スキル予測値'])
+    skill_7d = recent_7days['平均スキル予測値'].mean()
+    skill_30d = full_period['平均スキル予測値'].mean()
+    skill_trend = skill_7d - skill_30d if skill_has_trend else 0.0
+
     with col_trend2:
-        skill_7d = recent_7days['平均スキル予測値'].mean()
-        skill_30d = full_period['平均スキル予測値'].mean()
-        skill_trend = skill_7d - skill_30d
-        
-        st.metric(
-            "スキルスコア（直近7日平均）",
-            f"{skill_7d:.2f}",
-            delta=f"{skill_trend:.2f}",
-            delta_color="normal",
-            help="過去30日平均との比較"
-        )
-        
-        if skill_trend > 0:
-            st.success("✅ 向上トレンド", icon="📈")
+        if skill_has_trend:
+            st.metric(
+                "スキルスコア（直近7日平均）",
+                f"{skill_7d:.2f}",
+                delta=f"{skill_trend:.2f}",
+                delta_color="normal",
+                help="過去30日平均との比較"
+            )
+
+            if skill_trend > 0:
+                st.success("✅ 向上トレンド", icon="📈")
+            else:
+                st.error("⚠️ 低下トレンド", icon="📉")
         else:
-            st.error("⚠️ 低下トレンド", icon="📉")
+            st.metric(
+                "スキルスコア（拠点平均・参考値）",
+                f"{skill_7d:.2f}",
+                help="従業員評価が単一時点のため推移判定はできません"
+            )
+            st.info("評価データが単一時点のため、スキルの推移判定は行いません", icon="ℹ️")
     
     with col_trend3:
         defect_7d = recent_7days['品質不良率 (%)'].mean()
@@ -297,13 +310,23 @@ def show_monitoring_dashboard(df_daily_prod, target_location):
             st.error("⚠️ 悪化トレンド", icon="📉")
     
     # 分析コメント
+    if skill_has_trend:
+        insight_skill = (
+            f"生産効率の{'改善' if efficiency_trend > 0 else '低下'}と平均スキル予測値の{'向上' if skill_trend > 0 else '低下'}が"
+            f"{'同期' if (efficiency_trend > 0) == (skill_trend > 0) else '非同期'}しています。\n\n"
+            f"{'スキル改善施策が効果を発揮している可能性があります。' if skill_trend > 0 else 'スキル向上施策の強化が必要です。'}\n\n"
+        )
+    else:
+        # スキルは拠点平均の参考値で日次変動がないため、推移に関する洞察は出さない
+        insight_skill = (
+            "スキルスコアは従業員評価（単一時点）に基づく拠点平均の参考値のため、"
+            "期間中の推移については判定していません。\n\n"
+        )
     st.info(
         "💡 **分析の洞察**:\n\n"
-        f"生産効率の{'改善' if efficiency_trend > 0 else '低下'}と平均スキル予測値の{'向上' if skill_trend > 0 else '低下'}が"
-        f"{'同期' if (efficiency_trend > 0) == (skill_trend > 0) else '非同期'}しています。\n\n"
-        f"{'スキル改善施策が効果を発揮している可能性があります。' if skill_trend > 0 else 'スキル向上施策の強化が必要です。'}\n\n"
-        f"特に、{'夜勤' if latest_data.get('シフト') == '夜勤' else '日勤'}での"
-        f"{'生産効率が急落している場合、そのシフトメンバーのスキルレベルや設備トラブルへの対応能力が課題である可能性があります。' if efficiency_trend < 0 else '生産が安定しています。'}",
+        f"{insight_skill}"
+        f"生産効率は直近7日平均が期間平均比で {efficiency_trend:+.1f}% です。"
+        f"{'シフトメンバーのスキルレベルや設備トラブルへの対応能力が課題である可能性があります。' if efficiency_trend < 0 else '生産が安定しています。'}",
         icon="📊"
     )
     
